@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Finarchy goal risk check</title>
+  <meta name="description" content="Predicts whether a Finarchy savings goal will be abandoned before its goal date, with the probability.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="{{ url_for('index') }}">
+    <svg class="mark" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+      <circle cx="13" cy="13" r="10" fill="none" stroke="#DCE7FB" stroke-width="4"/>
+      <circle cx="13" cy="13" r="10" fill="none" stroke="#1B4FD8" stroke-width="4"
+              stroke-dasharray="44 63" stroke-linecap="round" transform="rotate(-90 13 13)"/>
+    </svg>
+    Finarchy
+  </a>
+  <span class="top-title">Goal risk check</span>
+  <a class="top-link" href="#api">API</a>
+</header>
+
+<main class="page">
+
+  <section class="intro">
+    <h1>Will this savings goal be abandoned before its date?</h1>
+    <p class="lead">
+      Finarchy helps young savers reach a goal that has a date on it: a master's,
+      a deposit, a trip. The saver sets the amount and the date, contributes monthly,
+      and the app lowers the investment risk as the date gets closer.
+    </p>
+    <p>
+      The biggest thing that can go wrong along the way is not a market dip.
+      It is the saver who stops contributing and quietly drops the goal.
+      This tool is Finarchy's early warning for that: enter three facts about a goal
+      and the trained model returns the chance it will be abandoned before its date.
+    </p>
+    <dl class="facts">
+      <dt>Predicts</dt>
+      <dd><code>goal_abandoned</code>: 1 if the goal is dropped before its goal date, 0 if it stays on track, plus the probability.</dd>
+      <dt>Risk area</dt>
+      <dd>Customer behaviour risk: savers abandoning their plan. For the saver it means a missed goal; for Finarchy it means lost deposits and a lost customer.</dd>
+      <dt>Model</dt>
+      <dd>Logistic regression (scikit-learn), trained on 1,000 goals. Test accuracy 79%, AUC 0.87.</dd>
+    </dl>
+  </section>
+
+  <section class="tool">
+    <form class="card form" method="post" action="{{ url_for('predict_form') }}#result">
+      <h2>Goal details</h2>
+
+      <div class="field">
+        <label for="months">Months since the goal was created</label>
+        <input id="months" name="months_since_goal_created" type="number" inputmode="numeric"
+               min="0" step="1" required aria-describedby="months-hint"
+               value="{{ form.get('months_since_goal_created', 12) }}">
+        <p class="hint" id="months-hint">Whole months. Goals in the training data were 1 to 36 months old.</p>
+      </div>
+
+      <div class="field">
+        <label for="contribution">Average monthly contribution (EUR)</label>
+        <input id="contribution" name="avg_monthly_contribution" type="number" inputmode="decimal"
+               min="0" step="0.01" required aria-describedby="contribution-hint"
+               value="{{ form.get('avg_monthly_contribution', 150) }}">
+        <p class="hint" id="contribution-hint">What the saver has put in per month, on average, since the goal started.</p>
+      </div>
+
+      <div class="field">
+        <label for="missed">Missed contributions in the last 6 months</label>
+        {% set missed = form.get('missed_contributions_last_6_months', 2)|string %}
+        <select id="missed" name="missed_contributions_last_6_months" required aria-describedby="missed-hint">
+          {% for n in range(0, 7) %}
+          <option value="{{ n }}" {% if missed == n|string %}selected{% endif %}>{{ n }}</option>
+          {% endfor %}
+        </select>
+        <p class="hint" id="missed-hint">Months, out of the last six, with no contribution at all.</p>
+      </div>
+
+      <button class="button" type="submit">Check risk</button>
+    </form>
+
+    <section class="card result {% if result %}is-{{ result.risk_level }}{% endif %}" id="result" aria-live="polite">
+      <h2>Result</h2>
+
+      {% if error %}
+        <p class="error" role="alert">{{ error }} Fix the value and choose Check risk again.</p>
+      {% elif result %}
+        <p class="result-kicker">Chance this goal is abandoned before its date</p>
+        <p class="big"><span>{{ (result.probability_abandoned * 100) | round(0) | int }}</span><small>%</small></p>
+      {% else %}
+        <p class="empty">No prediction yet. Fill in the goal details and choose <strong>Check risk</strong>.</p>
+      {% endif %}
+
+      <div class="meter" role="img"
+           aria-label="Risk scale: low under 30 percent, medium 30 to 50 percent, high 50 percent and over{% if result %}. Predicted: {{ (result.probability_abandoned * 100) | round(1) }} percent{% endif %}">
+        <span class="z-low"></span><span class="z-mid"></span><span class="z-high"></span>
+        {% if result %}<span class="marker" style="left: {{ (result.probability_abandoned * 100) | round(2) }}%"></span>{% endif %}
+      </div>
+      <div class="meter-labels" aria-hidden="true">
+        <span>Low<br>under 30%</span>
+        <span>Medium<br>30 to 50%</span>
+        <span>High<br>50% and over</span>
+      </div>
+
+      {% if result %}
+        <p class="verdict">
+          <span class="tag">{{ result.risk_level | capitalize }} risk</span>
+          {% if result.prediction == 1 %}
+            The model predicts this goal will be abandoned (prediction = 1).
+          {% else %}
+            The model predicts this goal stays on track (prediction = 0).
+          {% endif %}
+        </p>
+        <p class="action"><strong>Next step in Finarchy:</strong> {{ result.recommended_action }}</p>
+
+        {% if result.warnings %}
+          <ul class="warnings">
+            {% for warning in result.warnings %}<li>{{ warning }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+
+        <details class="api-peek">
+          <summary>Get the same prediction from the API</summary>
+          <pre>curl -X POST {{ request.url_root }}api/predict \
+  -H "Content-Type: application/json" \
+  -d '{"months_since_goal_created": {{ result.inputs.months_since_goal_created }},
+       "avg_monthly_contribution": {{ result.inputs.avg_monthly_contribution }},
+       "missed_contributions_last_6_months": {{ result.inputs.missed_contributions_last_6_months }}}'</pre>
+          <p class="hint">Response</p>
+          <pre>{{ result_json }}</pre>
+        </details>
+      {% endif %}
+    </section>
+
+    <section class="card bands-card">
+      <h2>What Finarchy does with the result</h2>
+      <p>Each risk band has a clear action inside the app, so the team steps in while the goal can still be saved.</p>
+      <dl class="bands">
+        <dt><span class="tag tag-low">Low risk</span> under 30%</dt>
+        <dd>No action needed. The saver keeps the standard monthly reminder.</dd>
+        <dt><span class="tag tag-medium">Medium risk</span> 30 to 50%</dt>
+        <dd>A nudge before the next contribution date, showing how close the goal already is.</dd>
+        <dt><span class="tag tag-high">High risk</span> 50% and over</dt>
+        <dd>Flagged for intervention: Finarchy offers a smaller monthly amount or a later goal date, so the saver adjusts the plan instead of giving up on it.</dd>
+      </dl>
+    </section>
+  </section>
+
+  <section class="details">
+    <h2>How the model works</h2>
+    <p>
+      The model is a logistic regression trained on 1,000 Finarchy goals, one row per goal.
+      Because the app has no live users yet, the dataset is simulated (see <code>fintech.py</code>).
+      The data was split 70/30 into training and test sets; on the test set the model
+      classifies 79% of goals correctly, with an AUC of 0.87.
+    </p>
+    <table class="signals">
+      <thead>
+        <tr><th scope="col">Input</th><th scope="col">What it does to the risk</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Missed contributions in the last 6 months</td>
+          <td>The strongest signal by far. Each missed month multiplies the odds of abandonment by about 2.6.</td>
+        </tr>
+        <tr>
+          <td>Months since the goal was created</td>
+          <td>Older goals are a little safer: a goal that is one year older has about 27% lower odds.</td>
+        </tr>
+        <tr>
+          <td>Average monthly contribution</td>
+          <td>Bigger contributions are a little safer: every extra 100 EUR a month cuts the odds by about 39%.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="api">For other applications: the API</h2>
+    <p>
+      The same prediction is available as JSON, so other parts of Finarchy
+      (or any other service) can call it. Send the three inputs to <code>POST /api/predict</code>:
+    </p>
+    <pre>curl -X POST {{ request.url_root }}api/predict \
+  -H "Content-Type: application/json" \
+  -d '{"months_since_goal_created": 12,
+       "avg_monthly_contribution": 150,
+       "missed_contributions_last_6_months": 3}'</pre>
+    <p>
+      A GET request with query-string parameters works too, which is handy for testing in a browser:
+      <a class="long-link" href="{{ url_for('api_predict', months_since_goal_created=12, avg_monthly_contribution=150, missed_contributions_last_6_months=3) }}">/api/predict?months_since_goal_created=12&amp;avg_monthly_contribution=150&amp;missed_contributions_last_6_months=3</a>
+    </p>
+    <p>
+      The response contains the inputs, the prediction (0 or 1), both probabilities,
+      the risk band and the recommended action. Invalid or missing inputs return
+      status 400 with an <code>error</code> message. Full details are in the README.
+    </p>
+  </section>
+
+</main>
+
+<footer class="foot">
+  Finarchy is a class project. The model is a prototype trained on simulated data and is not financial advice.
+</footer>
+
+</body>
+</html>
